@@ -74,13 +74,31 @@ UDP 回调只复制、校验并入队，主循环持续执行 `tud_task()` 和 `
 
 AutoFish 当前的 `crates/autofish-infra/src/pico.rs` 使用 HTTP `:5000` 的 `/device`、移动和按键接口，与此 UDP 固件不兼容。此处提供独立 UDP 查询接口与脚本；接入现有桌面应用需要配套实现 UDP 客户端及所需命令。
 
+## 屏幕位移标定与交互测试
+
+在 Pico USB 接入的同一台 Windows 电脑运行：
+
+```powershell
+python test.py --settings-only
+python test.py
+python test.py --direct
+```
+
+`--settings-only` 只读取 Windows 设置和 Pico 状态，不发送输入动作。默认测试拟人曲线，`--direct` 测试直接移动。脚本先显示实际指针速度、加速度和系统 DPI，再要求将鼠标移至屏幕中央。按回车后执行 X/Y 两轴的四次标定移动，不点击、不按键；请保持实体鼠标不动，并停止其他控制客户端。随后仍按原流程手动记录目标和起点。
+
+HID 相对位移是报告计数，不是屏幕像素。即使关闭提高指针精确度，Windows 指针速度和显示环境仍会影响桌面上的像素位移。DPI 感知解决坐标虚拟化，不能把 HID 计数转换成一比一像素。新版使用实际测得的每轴「像素/HID 单位」比例换算，不修改系统鼠标设置，也不要求 Pico 提供 DPI 设置。具体影响见 [Microsoft Raw Mouse 文档](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawmouse)。
+
+脚本通过动作接收计数、busy、队列和鼠标端点就绪状态等待动作结束，替代旧版按距离固定 sleep 的估计。只重试只读查询，不重发动作。当前动作协议无请求序号，测试时必须独占设备。Pico 拒绝/中止动作、重启、断连或出现并发命令时，脚本停止测试。
+
+起点和终点必须位于标定时的同一块屏幕，系统速度/加速度/DPI 改变后需重新标定。曲线控制点越过屏幕边缘时自动减小曲率，以减少边界裁剪；整数报告与标定误差仍可能带来少量像素偏差。较大偏差需继续诊断，不能直接标为「正常丢包」或一概归因于 DPI。
+
 ## 已修复的问题与验证
 
 原实现链接 `threadsafe_background`，却让 Core 1 调用 `cyw43_arch_poll()`；耗时动作实际上在网络回调上下文执行，且与主循环重入 TinyUSB。现改为单核 `pico_cyw43_arch_lwip_poll`。原先 USB busy 时跳过报告、可能漏发释放；大步长转 int8、int16 极限平方溢出、浮点非法值、直接移动未实现和修饰键错误也已修复。按 `pbuf->tot_len` 复制完整链式报文，并在释放 pbuf 前保留源地址。移除 `-ffast-math`，确保参数的有限值检查有效。
 
 ```powershell
 ./scripts/test_engine.ps1
-python -m unittest discover -s tests -p test_probe.py -v
+python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
 真实 C 引擎在本机 MSVC C11、`/W4 /WX` 下通过 9 组测试，包含 442 组边界/随机位移、USB 背压、释放重试与独立接口恢复、队列、断连、超时和协议编码。探测脚本通过 11 项回环 UDP 测试。Pico 2 W Release 交叉编译开启 `-Wall -Wextra -Werror`。这些检查不替代实机 USB 枚举、Wi-Fi 重连、物理移动和端到端延迟测量。
