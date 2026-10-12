@@ -43,7 +43,8 @@
 #define LINK_STATS 0
 // #define ETH_PAD_SIZE                2
 #define LWIP_CHKSUM_ALGORITHM 3
-#define LWIP_DHCP 1
+// Use the static CYW43_DEFAULT_IP_* values configured by CMake.
+#define LWIP_DHCP 0
 #define LWIP_IPV4 1
 #define LWIP_TCP 1
 #define LWIP_UDP 1

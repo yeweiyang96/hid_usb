@@ -40,13 +40,13 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(hid_usb hid_usb.c
+add_executable(hid_usb hid_usb.c hid_engine.c
     tusb_config.h
     usb_descriptors.c
     usb_descriptors.h )
 
 pico_set_program_name(hid_usb "hid_usb")
-pico_set_program_version(hid_usb "0.1")
+pico_set_program_version(hid_usb "0.2.1")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(hid_usb 0)
@@ -60,21 +60,32 @@ target_link_libraries(hid_usb
 target_include_directories(hid_usb PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
 )
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/wifi_config.h")
+    target_compile_definitions(hid_usb PRIVATE HID_HAS_WIFI_CONFIG=1)
+else()
+    message(STATUS "Wi-Fi uses CHANGE_ME placeholders; copy wifi_config.h.example to wifi_config.h and configure before deployment")
+endif()
+# Protocol validation must retain NaN/Inf checks, even with old cache flags.
+target_compile_options(hid_usb PRIVATE -Wall -Wextra -Werror -fno-fast-math)
 
 # Add any user requested libraries
 target_link_libraries(hid_usb 
         tinyusb_device 
         tinyusb_board
-        pico_cyw43_arch_lwip_threadsafe_background
-        pico_multicore
+        pico_cyw43_arch_lwip_poll
         )
 
-target_compile_options(hid_usb PRIVATE 
-    -O3 
-    -funroll-loops 
-    -fomit-frame-pointer 
-    -ffast-math
-)
+# Preserve the static IPv4 settings from the existing CircuitPython firmware.
+# With LWIP_DHCP=0, the CYW43 driver applies these on every STA initialization,
+# including a leave/rejoin after Wi-Fi loss.
+set(PICO_STATIC_IP "192.168.11.7" CACHE STRING "Pico static IPv4 address")
+set(PICO_STATIC_NETMASK "255.255.255.0" CACHE STRING "Pico IPv4 netmask")
+set(PICO_STATIC_GATEWAY "192.168.11.1" CACHE STRING "Pico IPv4 gateway")
+set(PICO_STATIC_DNS "8.8.8.8" CACHE STRING "Pico IPv4 DNS server")
+pico_configure_ip4_address(hid_usb PRIVATE CYW43_DEFAULT_IP_STA_ADDRESS "${PICO_STATIC_IP}")
+pico_configure_ip4_address(hid_usb PRIVATE CYW43_DEFAULT_IP_MASK "${PICO_STATIC_NETMASK}")
+pico_configure_ip4_address(hid_usb PRIVATE CYW43_DEFAULT_IP_STA_GATEWAY "${PICO_STATIC_GATEWAY}")
+pico_configure_ip4_address(hid_usb PRIVATE CYW43_DEFAULT_IP_DNS "${PICO_STATIC_DNS}")
 
 pico_add_extra_outputs(hid_usb)
 

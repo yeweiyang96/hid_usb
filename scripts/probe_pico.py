@@ -57,9 +57,13 @@ class DeviceStatus:
     def wifi_up(self) -> bool:
         return bool(self.flags & 0x10)
 
+    @property
+    def static_ip(self) -> bool:
+        return bool(self.flags & 0x20)
+
     def to_dict(self) -> dict:
         result = asdict(self)
-        for name in ("usb_mounted", "keyboard_ready", "mouse_ready", "busy", "wifi_up"):
+        for name in ("usb_mounted", "keyboard_ready", "mouse_ready", "busy", "wifi_up", "static_ip"):
             result[name] = getattr(self, name)
         return result
 
@@ -223,6 +227,7 @@ def format_result(result: ProbeResult) -> str:
             f"USB mounted: {yes_no(status.usb_mounted)}",
             f"Keyboard ready: {yes_no(status.keyboard_ready)}; mouse ready: {yes_no(status.mouse_ready)}",
             f"Wi-Fi up: {yes_no(status.wifi_up)}; busy: {yes_no(status.busy)}; queue: {status.queue_depth}/{status.queue_capacity}",
+            f"Static IPv4: {yes_no(status.static_ip)}",
             f"Uptime: {status.uptime_ms} ms; accepted commands: {status.accepted_commands}; rejected commands: {status.rejected_commands}",
         ])
         if not status.usb_mounted:

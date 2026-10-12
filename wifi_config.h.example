@@ -1,0 +1,8 @@
+#ifndef WIFI_CONFIG_H
+#define WIFI_CONFIG_H
+
+#define WIFI_SSID "CHANGE_ME"
+#define WIFI_PASSWORD "CHANGE_ME"
+#define UDP_PORT 8888
+
+#endif

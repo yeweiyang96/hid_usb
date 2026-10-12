@@ -1,2 +1,7 @@
 build
+build-*/
+backups/
+release/
+wifi_config.h
+__pycache__/
 !.vscode/*
