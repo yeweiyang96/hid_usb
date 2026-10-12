@@ -7,7 +7,7 @@ import ctypes
 from ctypes import windll, Structure, c_long, byref
 
 # ================= 配置区域 =================
-PICO_IP = "192.168.1.100"  # 请修改为你 Pico 连接 WiFi 后分配的 IP
+PICO_IP = "192.168.11.7"  # 请修改为你 Pico 连接 WiFi 后分配的 IP
 PICO_PORT = 8888           # 必须与 main.c 中的端口一致
 # ===========================================
 
