@@ -25,22 +25,23 @@ enum { ITF_KEYBOARD = 0, ITF_MOUSE = 1 };
 static HidEngine engine;
 static bool wifi_up;
 
-static bool send_keyboard(void *context, uint8_t modifier, uint8_t key) {
+static bool send_keyboard(void *context, uint8_t modifier, const uint8_t keys[6]) {
     (void)context;
     if (!tud_hid_n_ready(ITF_KEYBOARD)) return false;
-    uint8_t keys[6] = {key, 0, 0, 0, 0, 0};
     uint8_t id = tud_hid_n_get_protocol(ITF_KEYBOARD) == HID_PROTOCOL_BOOT ? 0 : REPORT_ID_KEYBOARD;
     return tud_hid_n_keyboard_report(ITF_KEYBOARD, id, modifier, keys);
 }
 
-static bool send_mouse(void *context, uint8_t buttons, int8_t dx, int8_t dy) {
+static bool send_mouse(void *context, uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel) {
     (void)context;
     if (!tud_hid_n_ready(ITF_MOUSE)) return false;
     if (tud_hid_n_get_protocol(ITF_MOUSE) == HID_PROTOCOL_BOOT) {
+        /* Boot mouse has no wheel; reject rather than claim scroll succeeded. */
+        if (wheel) return false;
         uint8_t report[3] = {(uint8_t)(buttons & 7u), (uint8_t)dx, (uint8_t)dy};
         return tud_hid_n_report(ITF_MOUSE, 0, report, sizeof(report));
     }
-    return tud_hid_n_mouse_report(ITF_MOUSE, REPORT_ID_MOUSE, buttons, dx, dy, 0, 0);
+    return tud_hid_n_mouse_report(ITF_MOUSE, REPORT_ID_MOUSE, buttons, dx, dy, wheel, 0);
 }
 
 static void send_health(struct udp_pcb *pcb, const ip_addr_t *addr, u16_t port, uint32_t token) {

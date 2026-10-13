@@ -13,23 +13,30 @@
 enum {
     CMD_PING = 0,
     CMD_PRESS_KEY = 1,
+    CMD_TOGGLE_KEY = 2,
     CMD_MOVE_DIRECT = 3,
     CMD_MOVE_HUMAN = 4,
-    CMD_CLICK_BUTTON = 8
+    CMD_CHORD = 5,
+    CMD_SCROLL = 6,
+    CMD_CLICK_BUTTON = 8,
+    CMD_TOGGLE_BUTTON = 9,
+    CMD_RELEASE_ALL = 10
 };
 
 typedef struct {
     uint8_t type;
     uint8_t code;
+    uint8_t modifier;
+    bool down;
     uint16_t hold_ms;
-    int16_t dx, dy;
+    int16_t dx, dy, wheel;
     float speed, curvature;
 } HidCommand;
 
 /* Hooks return true only when the USB stack accepted the report. */
 typedef struct {
-    bool (*mouse)(void *context, uint8_t buttons, int8_t dx, int8_t dy);
-    bool (*keyboard)(void *context, uint8_t modifier, uint8_t key);
+    bool (*mouse)(void *context, uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel);
+    bool (*keyboard)(void *context, uint8_t modifier, const uint8_t keys[6]);
     void *context;
 } HidTransport;
 
@@ -39,8 +46,10 @@ typedef struct {
     HidCommand command;
     uint8_t head, count, phase;
     bool active, release_mouse, release_keyboard;
+    uint8_t held_modifier, held_keys[6], held_buttons;
     uint16_t step, steps;
     int32_t sent_x, sent_y, target_x, target_y;
+    int32_t sent_wheel;
     float control1_x, control1_y, control2_x, control2_y;
     uint64_t due_us, progress_us;
     uint32_t random_state, accepted, rejected;
