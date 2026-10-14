@@ -87,7 +87,7 @@ class ProbeTests(unittest.TestCase):
                 response(token) + b"extra",
                 response(token ^ 0xFFFFFFFF),
                 response(token, magic=b"NOPE"),
-                response(token, version=2),
+                response(token, version=3),
                 response(token),
             ):
                 sock.sendto(packet, peer)
@@ -114,12 +114,19 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(result.samples[-1].error, "timeout")
 
     def test_bad_reply_alone_times_out(self):
-        with MockPico(lambda sock, peer, token, _: sock.sendto(response(token, version=2), peer)) as pico:
+        with MockPico(lambda sock, peer, token, _: sock.sendto(response(token, version=3), peer)) as pico:
             result = probe_pico.probe("127.0.0.1", pico.port, 0.04, 1)
         self.assertFalse(result.network_reachable)
         self.assertIsNone(result.last_status)
         self.assertIsNone(result.rtt_ms)
         self.assertEqual(result.loss_percent, 100)
+
+    def test_current_v2_and_legacy_v1(self):
+        for version in (1, 2):
+            with self.subTest(version=version):
+                with MockPico(lambda sock, peer, token, _: sock.sendto(response(token, version=version), peer)) as pico:
+                    result = probe_pico.probe("127.0.0.1", pico.port, 0.2, 1)
+                self.assertTrue(result.network_reachable)
 
     def test_invalid_traffic_cannot_extend_deadline(self):
         def handler(sock, peer, token, _):

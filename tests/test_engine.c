@@ -42,7 +42,8 @@ static Report *append_report(Fixture *f, uint8_t kind) {
     return report;
 }
 
-static bool send_mouse(void *context, uint8_t buttons, int8_t dx, int8_t dy) {
+static bool send_mouse(void *context, uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel) {
+    CHECK(wheel == 0);
     Fixture *f = (Fixture *)context;
     ++f->mouse_attempts;
     CHECK(dx >= -127 && dy >= -127);
@@ -56,13 +57,13 @@ static bool send_mouse(void *context, uint8_t buttons, int8_t dx, int8_t dy) {
     return true;
 }
 
-static bool send_keyboard(void *context, uint8_t modifier, uint8_t key) {
+static bool send_keyboard(void *context, uint8_t modifier, const uint8_t keys[6]) {
     Fixture *f = (Fixture *)context;
     ++f->keyboard_attempts;
     if (!f->accept_keyboard) return false;
     Report *report = append_report(f, 2);
     report->modifier = modifier;
-    report->code = key;
+    report->code = keys[0];
     return true;
 }
 
@@ -304,6 +305,7 @@ static void test_keys_and_clicks(void) {
     reset_fixture(123);
     command.type = CMD_CLICK_BUTTON;
     command.code = 31;
+    command.hold_ms = 0;
     CHECK(hid_engine_submit(&fixture.engine, &command));
     tick_after(0);
     CHECK(fixture.report_count == 1 && fixture.reports[0].code == 31);
@@ -465,7 +467,7 @@ static void test_health(void) {
     memset(packet, 0xFF, sizeof(packet));
     hid_health_encode(packet, 0x78563412u, 0xA5, 7, 0x12345678u, 0xFEDCBA98u, 0x98765432u);
     CHECK(memcmp(packet, "PICO", 4) == 0);
-    CHECK(packet[4] == 1 && packet[5] == 0xA5 && packet[6] == 7 && packet[7] == HID_QUEUE_CAPACITY);
+    CHECK(packet[4] == 2 && packet[5] == 0xA5 && packet[6] == 7 && packet[7] == HID_QUEUE_CAPACITY);
     CHECK(packet[8] == 0x12 && packet[9] == 0x34 && packet[10] == 0x56 && packet[11] == 0x78);
     CHECK(hid_read_u32(packet + 8) == 0x78563412u);
     CHECK(hid_read_u32(packet + 12) == 0x12345678u);

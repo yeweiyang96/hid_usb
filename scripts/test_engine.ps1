@@ -46,6 +46,13 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Host C compilation failed (exit $LASTEXITCODE)." }
         & $executable
         if ($LASTEXITCODE -ne 0) { throw "HID engine tests failed (exit $LASTEXITCODE)." }
+        $wifiExecutable = Join-Path $buildDirectory 'test_wifi_watch.exe'
+        & $compiler /nologo /TC /std:c11 /W4 /WX /O2 `
+            "/I$sourceRoot" (Join-Path $sourceRoot 'tests\test_wifi_watch.c') `
+            (Join-Path $sourceRoot 'wifi_watch.c') "/Fe:$wifiExecutable"
+        if ($LASTEXITCODE -ne 0) { throw "Wi-Fi watch compilation failed (exit $LASTEXITCODE)." }
+        & $wifiExecutable
+        if ($LASTEXITCODE -ne 0) { throw "Wi-Fi watch tests failed (exit $LASTEXITCODE)." }
     }
     finally {
         Pop-Location

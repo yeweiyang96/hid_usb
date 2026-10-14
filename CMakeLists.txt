@@ -40,13 +40,13 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(hid_usb hid_usb.c hid_engine.c
+add_executable(hid_usb hid_usb.c hid_engine.c wifi_watch.c
     tusb_config.h
     usb_descriptors.c
     usb_descriptors.h )
 
 pico_set_program_name(hid_usb "hid_usb")
-pico_set_program_version(hid_usb "0.3.0-autofish-v2")
+pico_set_program_version(hid_usb "0.3.1-wifi-recovery")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(hid_usb 0)
@@ -73,6 +73,7 @@ target_link_libraries(hid_usb
         tinyusb_device 
         tinyusb_board
         pico_cyw43_arch_lwip_poll
+        hardware_watchdog
         )
 
 # Preserve the static IPv4 settings from the existing CircuitPython firmware.

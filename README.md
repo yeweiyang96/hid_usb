@@ -16,11 +16,28 @@ Copy-Item wifi_config.h.example wifi_config.h
 
 构建脚本检查 Wi-Fi 名称和密码均已填写，并拒绝 `CHANGE_ME` 占位配置。直接使用 CMake 且缺少配置文件时，仍可完成无凭据的编译验证；这种占位固件无法连接实际 Wi-Fi。
 
-本次可烧录固件已使用本地 `wifi_config.h` 编译，文件为 `release/hid_usb-pico2w-v0.2.1-static-ip.uf2`，同目录提供 SHA256 校验文件。按住 BOOTSEL 接入 USB，将此 UF2 复制到出现的 Pico 磁盘，复制完成后设备会重启。
+当前固件版本为 `0.3.1-wifi-recovery`，使用本地 `wifi_config.h` 编译后的发布文件为 `release/hid_usb-pico2w-v0.3.1-wifi-recovery.uf2`，同目录提供 SHA256 校验文件。按住 BOOTSEL 接入 USB，将此 UF2 复制到出现的 Pico 磁盘，复制完成后设备会重启。固件源码、测试、编译和发布均在本原项目进行。
 
 沿用旧固件的静态网络配置：IP `192.168.11.7`、子网掩码 `255.255.255.0`、网关 `192.168.11.1`、DNS `8.8.8.8`。lwIP DHCP 客户端已关闭，启动与 Wi-Fi 重新连接均由 CYW43 驱动应用这组地址，不向路由器申请地址。配置项位于 CMake 的 `PICO_STATIC_IP`、`PICO_STATIC_NETMASK`、`PICO_STATIC_GATEWAY`、`PICO_STATIC_DNS` 缓存变量。
 
-USB 初始化独立于 Wi-Fi 连接；Wi-Fi 失败不会让 USB 主循环退出。连接在后台状态机中推进，断线后尝试重新连接。硬件初始化或 UDP 服务创建失败时，USB 仍运行，但网络探测不会成功。
+USB 初始化独立于 Wi-Fi 连接；Wi-Fi 失败不会让 USB 主循环退出。连接通过主循环中的异步状态机推进；Wi-Fi 驱动初始化和配置调用本身可能短暂阻塞。硬件初始化或 UDP 服务创建失败时每 30 秒重试。网络不通期间 USB 仍可能保持已枚举状态，这不能证明 Wi-Fi 正常。
+
+## 待机断网恢复与诊断
+
+`0.3.1` 补上了旧实现只检查驱动连接标志的恢复缺口。连接后每 15 秒向静态网关发 ARP 请求，观察真实的网关 ARP 回应或发给本机的 IPv4 数据包。广播和无关 ARP 不算恢复证据。探测等待 3 秒，失败后隔 5 秒重试；连续 3 次没有有效接收会重新初始化 CYW43 驱动、STA 网卡和 UDP 服务，重新应用静态地址并连接。不依赖网关允许 ICMP ping。
+
+驱动明确报告掉线时约 5 秒后尝试重新关联；30 秒仍未连接则重新初始化 Wi-Fi。每次初始化、连接成功后设置 SDK 的 `CYW43_NONE_PM` 并读取模式验证，设置失败会在后续网络探测时重试。连接成功还发送 gratuitous ARP，刷新局域网邻居缓存。恢复会中止动作并释放按键，不重放未完成命令。
+
+主循环看门狗超时为 8 秒，只有 USB/网络循环完成一轮后才喂狗。驱动调用或主循环卡住时整板复位，USB 会重新枚举；普通 Wi-Fi 恢复只重建网络。路由器关闭或 Wi-Fi 信号不可用时，这些机制不能让网络立刻恢复。ARP 保活是预防和恢复措施，尚需刷入后实机待机验证，不能仅凭主机测试认定原断线根因已确定。
+
+```powershell
+python scripts/diagnose_wifi.py
+python scripts/diagnose_wifi.py --idle-seconds 300
+```
+
+诊断脚本只发只读查询；第二条在查询前后间隔 5 分钟，期间不从电脑发探测或输入动作，适合验证 Pico 自身的待机保活。测试期间请停止其他客户端主动查询。对比 `radio_resets` 判断是否发生了 Wi-Fi 重建，`watchdog_boot` 判断本次是否由看门狗启动，`power_save_disabled` 判断模式读取是否确认关闭省电。网关不可用也可能导致 Wi-Fi 重建；复位计数不等于已证明驱动故障。
+
+扩展诊断请求为 9 字节 `<BI4s`：`0`、随机 token、`b'DIAG'`。响应 64 字节，前 24 字节沿用健康查询字段布局，但 magic 为 `PICD`、独立格式版本为 `1`；其后 `<IIIIiiiIII` 为 connect_attempts、radio_resets、last_rx_age_ms、pm_value、pm_result、join_result、link_status、watchdog_boot、missed_probes、recovery_reason。reason：0 未触发，1 驱动掉线/连接超时，2 没有有效收包。计数从本次启动累计，connect_attempts 包括首次连接。旧固件不支持该扩展查询。
 
 ## 查询 Pico 是否可访问
 
@@ -44,8 +61,8 @@ python scripts/probe_pico.py 192.168.11.7 --port 8888 --count 10 --timeout 1 --j
 | 偏移 | 字段 | 含义 |
 | --- | --- | --- |
 | 0 | `magic[4]` | ASCII `PICO` |
-| 4 | `version` | 查询协议版本 `1` |
-| 5 | `flags` | bit0 USB mounted，bit1 键盘 ready，bit2 鼠标 ready，bit3 busy，bit4 Wi-Fi up，bit5 static IPv4 |
+| 4 | `version` | 当前动作扩展固件版本 `2`；查询脚本兼容 `1` 和 `2` |
+| 5 | `flags` | bit0 USB mounted，bit1 键盘 ready，bit2 鼠标 ready，bit3 busy，bit4 Wi-Fi up，bit5 static IPv4，bit6 本次由看门狗启动 |
 | 6 | `queueDepth` | 等待执行数量，不含正在执行的命令 |
 | 7 | `queueCapacity` | `8` |
 | 8 | `token` | 原样回传查询 token |
@@ -62,9 +79,14 @@ python scripts/probe_pico.py 192.168.11.7 --port 8888 --count 10 --timeout 1 --j
 | 命令 | Python 打包格式 | 字段与范围 |
 | --- | --- | --- |
 | `1` 按键 | `<BBH` | cmd、USB HID usage keycode `4..0xE7`、保持时间 `0..5000` ms；`0xE0..0xE7` 转换为 Ctrl/Shift/Alt/GUI 修饰位 |
+| `2` 按键按下/释放 | `<BBBH` | cmd、keycode、down `0/1`、动作后等待 `0..5000` ms |
 | `3` 直接移动 | `<Bhh` | cmd、相对 `dx`、`dy`；完整 int16 范围 |
 | `4` 曲线移动 | `<Bhhff` | cmd、相对 `dx`、`dy`、速度 `0..100`、曲率 `-100..100`；拒绝 NaN/Inf |
-| `8` 点击 | `<BB` | cmd、按钮掩码 `1..31`；1=左、2=右、4=中、8/16=侧键；保持时间随机 60..100 ms |
+| `5` 组合键 | `<BBBH` | cmd、modifier 掩码、keycode、保持时间 `0..5000` ms |
+| `6` 滚轮 | `<Bh` | cmd、完整 int16 相对滚动量 |
+| `8` 点击 | `<BB` 或 `<BBH` | cmd、按钮掩码 `1..31`，可选保持时间 `0..5000` ms；1=左、2=右、4=中、8/16=侧键；省略或为零时随机 60..100 ms |
+| `9` 鼠标按下/释放 | `<BBBH` | cmd、按钮掩码、down `0/1`、动作后等待 `0..5000` ms |
+| `10` 全部释放 | `<B` | cmd；清除已保持的键盘和鼠标状态 |
 
 按键保持时间保留 ±5 ms 抖动，非零最小为 1 ms。直接移动和曲线移动均拆分成 `[-127,127]` 的报告，只有 TinyUSB 接受报告后才累计位移。曲线采用三次贝塞尔、缓起缓停和时间抖动，最后明确补齐整数终点；累计 HID 位移精确不代表屏幕像素精确，操作系统指针速度、加速和屏幕边界仍会影响光标位置。
 
@@ -72,7 +94,7 @@ UDP 回调只复制、校验并入队，主循环持续执行 `tud_task()` 和 `
 
 当前动作协议仍是无序号、无完成 ACK 的 UDP 数据包，可能丢包、重复或乱序；调用方不能仅凭 `sendto()` 成功判断动作完成，也不能盲目重发点击或按键。需要完成确认与去重时，应另加带序号的动作协议。UDP 服务没有鉴权，应限定在可信局域网使用。
 
-AutoFish 当前的 `crates/autofish-infra/src/pico.rs` 使用 HTTP `:5000` 的 `/device`、移动和按键接口，与此 UDP 固件不兼容。此处提供独立 UDP 查询接口与脚本；接入现有桌面应用需要配套实现 UDP 客户端及所需命令。
+客户端需要实现本页的 UDP 协议；旧 HTTP `:5000` 接口不适用于此固件。本次网络恢复修改保留原项目已有的 v2 动作扩展，不改变上述动作命令格式。
 
 ## 屏幕位移标定与交互测试
 
@@ -101,7 +123,7 @@ HID 相对位移是报告计数，不是屏幕像素。即使关闭提高指针�
 python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-真实 C 引擎在本机 MSVC C11、`/W4 /WX` 下通过 9 组测试，包含 442 组边界/随机位移、USB 背压、释放重试与独立接口恢复、队列、断连、超时和协议编码。探测脚本通过 11 项回环 UDP 测试。Pico 2 W Release 交叉编译开启 `-Wall -Wextra -Werror`。这些检查不替代实机 USB 枚举、Wi-Fi 重连、物理移动和端到端延迟测量。
+真实 C 引擎在本机 MSVC C11、`/W4 /WX` 下通过 9 组测试，包含 442 组边界/随机位移、USB 背压、释放重试与独立接口恢复、队列、断连、超时和协议编码。Wi-Fi 监测状态机另有 5 组测试，覆盖正常长时间待机、驱动假 UP、丢包、重连超时、初始化失败及报文过滤。Python 查询、诊断与鼠标标定共 24 项测试。Pico 2 W Release 交叉编译开启 `-Wall -Wextra -Werror`。这些检查不替代实机 USB 枚举、Wi-Fi 重连、物理移动和端到端延迟测量。
 
 原源码和原 UF2 备份：`backups/original-20261013-041947/`。
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check the Pico UDP service without sending keyboard or mouse actions.
 
-Protocol v1 uses little-endian integers. A request is command 0 followed by a
+Protocols v1/v2 use little-endian integers. A request is command 0 followed by a
 random 32-bit token; a response echoes that token along with device status.
 """
 
@@ -23,7 +23,7 @@ from typing import Sequence
 REQUEST = struct.Struct("<BI")
 RESPONSE = struct.Struct("<4sBBBBIIII")
 MAGIC = b"PICO"
-VERSION = 1
+SUPPORTED_VERSIONS = (1, 2)
 COMMAND_PROBE = 0
 
 
@@ -137,7 +137,7 @@ def decode_response(data: bytes, expected_token: int) -> DeviceStatus | None:
     if len(data) != RESPONSE.size:
         return None
     magic, version, flags, depth, capacity, token, uptime, accepted, rejected = RESPONSE.unpack(data)
-    if magic != MAGIC or version != VERSION or token != expected_token:
+    if magic != MAGIC or version not in SUPPORTED_VERSIONS or token != expected_token:
         return None
     return DeviceStatus(flags, depth, capacity, token, uptime, accepted, rejected)
 
