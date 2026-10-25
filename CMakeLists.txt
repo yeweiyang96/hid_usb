@@ -40,13 +40,13 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(hid_usb hid_usb.c hid_engine.c wifi_watch.c
+add_executable(hid_usb hid_usb.c hid_engine.c hid_bridge.c wifi_watch.c wifi_service.c
     tusb_config.h
     usb_descriptors.c
     usb_descriptors.h )
 
 pico_set_program_name(hid_usb "hid_usb")
-pico_set_program_version(hid_usb "0.3.1-wifi-recovery")
+pico_set_program_version(hid_usb "0.4.0-dualcore")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(hid_usb 0)
@@ -67,12 +67,14 @@ else()
 endif()
 # Protocol validation must retain NaN/Inf checks, even with old cache flags.
 target_compile_options(hid_usb PRIVATE -Wall -Wextra -Werror -fno-fast-math)
+# Core 1 is launched with the explicit 8 KiB main-SRAM stack in hid_usb.c.
 
 # Add any user requested libraries
 target_link_libraries(hid_usb 
         tinyusb_device 
         tinyusb_board
-        pico_cyw43_arch_lwip_poll
+        pico_cyw43_arch_lwip_threadsafe_background
+        pico_multicore
         hardware_watchdog
         )
 

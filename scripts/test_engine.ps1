@@ -53,6 +53,15 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Wi-Fi watch compilation failed (exit $LASTEXITCODE)." }
         & $wifiExecutable
         if ($LASTEXITCODE -ne 0) { throw "Wi-Fi watch tests failed (exit $LASTEXITCODE)." }
+        $bridgeExecutable = Join-Path $buildDirectory 'test_hid_bridge.exe'
+        & $compiler /nologo /TC /std:c11 /W4 /WX /O2 `
+            "/I$(Join-Path $sourceRoot 'tests\stubs')" "/I$sourceRoot" `
+            (Join-Path $sourceRoot 'tests\test_hid_bridge.c') `
+            (Join-Path $sourceRoot 'hid_bridge.c') `
+            (Join-Path $sourceRoot 'hid_engine.c') "/Fe:$bridgeExecutable"
+        if ($LASTEXITCODE -ne 0) { throw "HID bridge compilation failed (exit $LASTEXITCODE)." }
+        & $bridgeExecutable
+        if ($LASTEXITCODE -ne 0) { throw "HID bridge tests failed (exit $LASTEXITCODE)." }
     }
     finally {
         Pop-Location

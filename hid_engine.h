@@ -63,7 +63,7 @@ void hid_health_encode(uint8_t out[HID_HEALTH_SIZE], uint32_t token,
 void hid_engine_init(HidEngine *engine, HidTransport transport, uint32_t seed);
 bool hid_engine_submit(HidEngine *engine, const HidCommand *command);
 void hid_engine_abort(HidEngine *engine);
-/* Call frequently from the sole USB/network application loop, never an IRQ. */
+/* Call frequently from the owning USB core's application loop, never an IRQ. */
 void hid_engine_tick(HidEngine *engine, uint64_t now_us, bool available);
 bool hid_engine_busy(const HidEngine *engine);
 

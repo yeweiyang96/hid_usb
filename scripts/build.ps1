@@ -7,8 +7,9 @@ $cmake = Join-Path $sdkRoot 'cmake\v4.3.4\bin\cmake.exe'
 $ninja = Join-Path $sdkRoot 'ninja\v1.13.2\ninja.exe'
 $sdk = Join-Path $sdkRoot 'sdk\2.3.1'
 $toolchain = Join-Path $sdkRoot 'toolchain\15_2_Rel1'
+$python = Join-Path $sdkRoot 'python\3.13.7\python.exe'
 
-foreach ($path in @($cmake, $ninja, $sdk, $toolchain)) {
+foreach ($path in @($cmake, $ninja, $sdk, $toolchain, $python)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Pico SDK/tool not found: $path" }
 }
 $wifiConfigPath = Join-Path $projectRoot 'wifi_config.h'
@@ -34,7 +35,7 @@ try {
     $env:PICO_SDK_PATH = $sdk
     $env:PICO_TOOLCHAIN_PATH = $toolchain
     $buildPath = [IO.Path]::GetFullPath((Join-Path $projectRoot $BuildDirectory))
-    & $cmake -S $projectRoot -B $buildPath -G Ninja '-DCMAKE_BUILD_TYPE=Release' "-DCMAKE_MAKE_PROGRAM=$ninja" '-DPICO_BOARD=pico2_w'
+    & $cmake -S $projectRoot -B $buildPath -G Ninja '-DCMAKE_BUILD_TYPE=Release' "-DCMAKE_MAKE_PROGRAM=$ninja" "-DPython3_EXECUTABLE=$python" '-DPICO_BOARD=pico2_w'
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed ($LASTEXITCODE)" }
     & $cmake --build $buildPath --parallel
     if ($LASTEXITCODE -ne 0) { throw "Firmware build failed ($LASTEXITCODE)" }
