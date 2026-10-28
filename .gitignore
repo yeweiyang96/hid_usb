@@ -5,3 +5,4 @@ release/
 wifi_config.h
 __pycache__/
 !.vscode/*
+.tools/

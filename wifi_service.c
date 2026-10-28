@@ -51,12 +51,21 @@ static err_t observed_input(struct pbuf *p, struct netif *netif) {
 static void link_changed(struct netif *netif) {
     if (!netif_is_link_up(netif) || !netif_is_up(netif)) {
         /* Independent of queue capacity; closes output and drops waiting work. */
-        hid_bridge_network(bridge, false, false);
+        hid_bridge_network_at(bridge,false,false,(uint32_t)(time_us_64()/1000u));
     }
 }
 
 static void write_u32(uint8_t *out, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) out[i] = (uint8_t)(value >> (8u * i));
+}
+
+static void send_reply(struct udp_pcb *pcb,const ip_addr_t *addr,u16_t port,
+                       const void *data,uint16_t size) {
+    struct pbuf *reply=pbuf_alloc(PBUF_TRANSPORT,size,PBUF_RAM);
+    if (!reply) { hid_bridge_note_send_error(bridge); return; }
+    if (pbuf_take(reply,data,size)!=ERR_OK || udp_sendto(pcb,reply,addr,port)!=ERR_OK)
+        hid_bridge_note_send_error(bridge);
+    pbuf_free(reply);
 }
 
 static void send_health(struct udp_pcb *pcb, const ip_addr_t *addr, u16_t port,
@@ -89,10 +98,7 @@ static void send_health(struct udp_pcb *pcb, const ip_addr_t *addr, u16_t port,
             write_u32(response + 76, status.available ? 1u : 0u);
         }
     }
-    struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, size, PBUF_RAM);
-    if (!reply) return;
-    if (pbuf_take(reply, response, size) == ERR_OK) (void)udp_sendto(pcb, reply, addr, port);
-    pbuf_free(reply);
+    send_reply(pcb,addr,port,response,size);
 }
 
 /* Runs under the SDK lwIP lock on Core 1, possibly in a low-priority IRQ.
@@ -122,15 +128,29 @@ static void udp_server_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
             return;
         }
     }
+    if (length >= 4 && !memcmp(data, "ADRV", 4)) {
+        if (length>=6 && data[5]==LEASE_DIAGNOSTIC) {
+            uint8_t diagnostic[HID_DIAGNOSTIC_SIZE];
+            hid_bridge_diagnostic_request(bridge,data,length,(uint32_t)(time_us_64()/1000u),diagnostic);
+            send_reply(pcb,&source,port,diagnostic,sizeof(diagnostic));
+        } else {
+            uint8_t response[HID_LEASE_RESPONSE_SIZE];
+            hid_bridge_lease_request(bridge,data,length,(uint32_t)(time_us_64()/1000u),response);
+            send_reply(pcb,&source,port,response,sizeof(response));
+        }
+        return;
+    }
     HidCommand command;
     if (!hid_command_decode(data, length, &command)) {
         hid_bridge_reject(bridge);
         return;
     }
     if (cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) != CYW43_LINK_UP) {
-        hid_bridge_network(bridge, false, false);
+        hid_bridge_network_at(bridge,false,false,(uint32_t)(time_us_64()/1000u));
     }
-    (void)hid_bridge_submit(bridge, &command);
+    if (command.type==CMD_RELEASE_ALL)
+        hid_bridge_release_at(bridge,(uint32_t)(time_us_64()/1000u));
+    else (void)hid_bridge_submit(bridge,&command);
 }
 
 static void network_start(void) {
@@ -199,7 +219,7 @@ static void wifi_task(uint64_t now_us) {
         (void)etharp_gratuitous(&cyw43_state.netif[CYW43_ITF_STA]);
     }
     wifi_up = up;
-    hid_bridge_network(bridge, up, false);
+    hid_bridge_network_at(bridge,up,false,(uint32_t)(now_us/1000u));
     struct netif *netif = &cyw43_state.netif[CYW43_ITF_STA];
     bool gateway = network_initialized && !ip4_addr_isany_val(*netif_ip4_gw(netif));
     WifiWatchAction action = wifi_watch_tick(&wifi_watch, now_us, network_initialized, up, gateway);
@@ -209,13 +229,13 @@ static void wifi_task(uint64_t now_us) {
         (void)etharp_request(netif, netif_ip4_gw(netif));
         break;
     case WIFI_WATCH_REJOIN:
-        hid_bridge_network(bridge, false, true);
+        hid_bridge_network_at(bridge,false,true,(uint32_t)(now_us/1000u));
         ++reconnect_count;
         (void)cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
         join_result = cyw43_arch_wifi_connect_async(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK);
         break;
     case WIFI_WATCH_RESET:
-        hid_bridge_network(bridge, false, true);
+        hid_bridge_network_at(bridge,false,true,(uint32_t)(now_us/1000u));
         break;
     default:
         break;
@@ -233,7 +253,7 @@ void wifi_service_run(HidBridge *shared_bridge, bool boot_from_watchdog) {
     while (true) {
         wifi_task(time_us_64());
         /* Only main-loop progress is credited, not background IRQ traffic. */
-        hid_bridge_network_heartbeat(bridge, (uint32_t)(time_us_64() / 1000u));
+        hid_bridge_network_heartbeat_at(bridge,time_us_64());
         sleep_ms(1);
     }
 }

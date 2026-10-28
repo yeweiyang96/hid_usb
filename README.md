@@ -1,5 +1,7 @@
 # Pico 2 W UDP HID 固件
 
+当前源码为 **0.5.1-diagnostics**，新增用于连续行走的带期限键盘状态通道：持续续租时不松键，过期自动释放，STOP 抢占当前动作；会话与序号防止迟到包恢复旧输入。见[新协议说明](docs/lease-protocol.md)。新增[只读诊断](docs/diagnostics-v1.md)，区分停止原因、USB提交与完成，并显示固件能力和错误/循环停顿计数。旧 UDP 格式保留；旧命令 10 已强化为抢占释放。
+
 Pico SDK 2.3.1 + TinyUSB，UDP 默认端口 `8888`。键盘和鼠标使用两个独立的 USB HID 接口，USB 轮询间隔为 1 ms。Wi-Fi 关闭省电模式；这会增加功耗。1 ms 是 USB 轮询间隔，实际端到端延迟需要在板上测量。
 
 ## 双核分工与同步
@@ -17,16 +19,17 @@ Core 1 使用主 SRAM 中独立分配的 8 KiB 栈，由 `multicore_launch_core1
 在本目录执行：
 
 ```powershell
+./scripts/setup-toolchain.ps1
 Copy-Item wifi_config.h.example wifi_config.h
 # 编辑 wifi_config.h，填写 WIFI_SSID / WIFI_PASSWORD；也可修改 UDP_PORT。
 ./scripts/build.ps1
 ```
 
-脚本使用本机 Pico VS Code 扩展安装的 SDK 2.3.1、GCC 15_2_Rel1、CMake v4.3.4 和 Ninja v1.13.2，输出 `build-verified/hid_usb.uf2`。`wifi_config.h` 已加入忽略规则。修改配置后重新构建，将 UF2 复制到处于 BOOTSEL 模式的 Pico 2 W，再正常启动。
+setup 脚本按锁文件在项目 `.tools` 中准备 SDK 2.3.1、GCC 15.2.Rel1、CMake 4.3.4 和 Ninja 1.13.2；构建输出 `build-verified/hid_usb.uf2`。`wifi_config.h` 已加入忽略规则。修改配置后重新构建，将 UF2 复制到处于 BOOTSEL 模式的 Pico 2 W，再正常启动。
 
 构建脚本检查 Wi-Fi 名称和密码均已填写，并拒绝 `CHANGE_ME` 占位配置。直接使用 CMake 且缺少配置文件时，仍可完成无凭据的编译验证；这种占位固件无法连接实际 Wi-Fi。
 
-当前固件版本为 `0.4.0-dualcore`，使用本地 `wifi_config.h` 编译后的发布文件为 `release/hid_usb-pico2w-v0.4.0-dualcore.uf2`，同目录提供 SHA256 校验文件。按住 BOOTSEL 接入 USB，将此 UF2 复制到出现的 Pico 磁盘，复制完成后设备会重启。固件源码、测试、编译和发布均在本原项目进行，不复制到 AutoFish 项目。
+本地 `wifi_config.h` 不随 Git 克隆提供。当前用户已配置 Wi-Fi，本次已生成联网版 `build-verified/hid_usb.uf2`，SHA256 为 `e73d3219eabf48a16a1be019fd9debc2d2418d92b48be872f7ab85f969e97556`。另有 `build-compile-only` 无凭据产物，仅用于编译验证，不适合刷入使用。构建详情见[构建说明](docs/build-environment.md)；本次尚未刷入和实机测试。
 
 沿用旧固件的静态网络配置：IP `192.168.11.7`、子网掩码 `255.255.255.0`、网关 `192.168.11.1`、DNS `8.8.8.8`。lwIP DHCP 客户端已关闭，启动与 Wi-Fi 重新连接均由 CYW43 驱动应用这组地址，不向路由器申请地址。配置项位于 CMake 的 `PICO_STATIC_IP`、`PICO_STATIC_NETMASK`、`PICO_STATIC_GATEWAY`、`PICO_STATIC_DNS` 缓存变量。
 
@@ -100,13 +103,13 @@ python scripts/probe_pico.py 192.168.11.7 --port 8888 --count 10 --timeout 1 --j
 | `6` 滚轮 | `<Bh` | cmd、完整 int16 相对滚动量 |
 | `8` 点击 | `<BB` 或 `<BBH` | cmd、按钮掩码 `1..31`，可选保持时间 `0..5000` ms；1=左、2=右、4=中、8/16=侧键；省略或为零时随机 60..100 ms |
 | `9` 鼠标按下/释放 | `<BBBH` | cmd、按钮掩码、down `0/1`、动作后等待 `0..5000` ms |
-| `10` 全部释放 | `<B` | cmd；清除已保持的键盘和鼠标状态 |
+| `10` 全部释放 | `<B` | cmd；抢占取消当前动作和队列，并安排键盘、鼠标全释放 |
 
 按键保持时间保留 ±5 ms 抖动，非零最小为 1 ms。直接移动和曲线移动均拆分成 `[-127,127]` 的报告，只有 TinyUSB 接受报告后才累计位移。曲线采用三次贝塞尔、缓起缓停和时间抖动，最后明确补齐整数终点；累计 HID 位移精确不代表屏幕像素精确，操作系统指针速度、加速和屏幕边界仍会影响光标位置。
 
 Core 1 的 UDP 回调只复制、校验并提交跨核队列；Core 0 持续执行 `tud_task()` 并通过时间戳非阻塞调度动作，不再调用 `cyw43_arch_poll()`。等待队列容量 8，另有 1 个执行中的命令。队列满、动作入口关闭或 USB 不可用时拒绝新动作。USB 断连/挂起、Wi-Fi 掉线、传输失败或连续 2 秒无法提交报告会中止动作和队列；USB 可用时独立重试键盘/鼠标释放。合法保持时间不计入 USB 停滞超时。Boot 模式使用无 Report ID 的标准 8 字节键盘和 3 字节鼠标报告；鼠标侧键只在 Report 模式支持。
 
-当前动作协议仍是无序号、无完成 ACK 的 UDP 数据包，可能丢包、重复或乱序；调用方不能仅凭 `sendto()` 成功判断动作完成，也不能盲目重发点击或按键。需要完成确认与去重时，应另加带序号的动作协议。UDP 服务没有鉴权，应限定在可信局域网使用。
+旧版动作协议仍是无序号、无完成 ACK 的 UDP 数据包，可能丢包、重复或乱序；调用方不能仅凭 `sendto()` 成功判断动作完成，也不能盲目重发点击或按键。需要状态序号、确认和期限保护时，使用新增的[键盘租约协议](docs/lease-protocol.md)。UDP 服务没有鉴权，应限定在可信局域网使用。
 
 客户端需要实现本页的 UDP 协议；旧 HTTP `:5000` 接口不适用于此固件。本次网络恢复修改保留原项目已有的 v2 动作扩展，不改变上述动作命令格式。
 
@@ -137,7 +140,7 @@ HID 相对位移是报告计数，不是屏幕像素。即使关闭提高指针�
 python -B -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-主机 C 测试使用 MSVC C11、`/W4 /WX`，共 23 组（输入引擎 9、Wi-Fi 监测 5、跨核桥 9）。包括 442 组边界/随机位移、USB 背压、释放重试、断连、超时，以及 30,000 条命令的三线程生产/消费/快照压力测试。跨核桥测试实际运行生产代码，以主机锁模拟硬件临界区，覆盖 8+1 容量、取消确认、旧命令丢弃、全零释放、计数回绕和输出提交与掉线互斥；不验证 RP2350 硬件 IRQ 时序。27 项 Python 测试覆盖健康查询、两版诊断与只读 UDP、超时、过期回应及鼠标标定。Pico 2 W Release 交叉编译开启 `-Wall -Wextra -Werror`。这些检查不替代实机 USB 枚举、Wi-Fi 重连、物理移动和端到端延迟测量；双核架构的待机稳定性须在烧录后验证。
+主机 C 测试使用 MSVC C11、`/W4 /WX`，共 36 组（输入引擎 9、Wi-Fi 监测 5、跨核桥 9、键盘租约 7、只读诊断 6）。包括 442 组边界/随机位移、USB 背压、释放重试、断连、超时，以及 30,000 条命令的三线程生产/消费/快照压力测试。跨核桥测试实际运行生产代码，以主机锁模拟硬件临界区，覆盖 8+1 容量、取消确认、旧命令丢弃、全零释放、计数回绕和输出提交与掉线互斥；不验证 RP2350 硬件 IRQ 时序。27 项 Python 测试覆盖健康查询、两版诊断与只读 UDP、超时、过期回应及鼠标标定。Pico 2 W Release 交叉编译开启 `-Wall -Wextra -Werror`。这些检查不替代实机 USB 枚举、Wi-Fi 重连、物理移动和端到端延迟测量；双核架构的待机稳定性须在烧录后验证。
 
 原源码和原 UF2 备份：`backups/original-20261013-041947/`。
 

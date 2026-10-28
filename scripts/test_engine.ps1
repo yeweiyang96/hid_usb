@@ -58,10 +58,33 @@ try {
             "/I$(Join-Path $sourceRoot 'tests\stubs')" "/I$sourceRoot" `
             (Join-Path $sourceRoot 'tests\test_hid_bridge.c') `
             (Join-Path $sourceRoot 'hid_bridge.c') `
+            (Join-Path $sourceRoot 'hid_lease.c') `
             (Join-Path $sourceRoot 'hid_engine.c') "/Fe:$bridgeExecutable"
         if ($LASTEXITCODE -ne 0) { throw "HID bridge compilation failed (exit $LASTEXITCODE)." }
         & $bridgeExecutable
         if ($LASTEXITCODE -ne 0) { throw "HID bridge tests failed (exit $LASTEXITCODE)." }
+        $leaseExecutable = Join-Path $buildDirectory 'test_hid_lease.exe'
+        & $compiler /nologo /TC /std:c11 /W4 /WX /O2 `
+            "/I$(Join-Path $sourceRoot 'tests\stubs')" "/I$sourceRoot" `
+            (Join-Path $sourceRoot 'tests\test_hid_lease.c') `
+            (Join-Path $sourceRoot 'hid_bridge.c') `
+            (Join-Path $sourceRoot 'hid_lease.c') `
+            (Join-Path $sourceRoot 'hid_engine.c') "/Fe:$leaseExecutable"
+        if ($LASTEXITCODE -ne 0) { throw "Lease compilation failed (exit $LASTEXITCODE)." }
+        & $leaseExecutable
+        if ($LASTEXITCODE -ne 0) { throw "Lease tests failed (exit $LASTEXITCODE)." }
+        $diagnosticExecutable = Join-Path $buildDirectory 'test_hid_diagnostics.exe'
+        & $compiler /nologo /TC /std:c11 /W4 /WX /O2 `
+            "/I$(Join-Path $sourceRoot 'tests\stubs')" "/I$sourceRoot" `
+            (Join-Path $sourceRoot 'tests\test_hid_diagnostics.c') `
+            (Join-Path $sourceRoot 'hid_bridge.c') `
+            (Join-Path $sourceRoot 'hid_lease.c') `
+            (Join-Path $sourceRoot 'hid_engine.c') "/Fe:$diagnosticExecutable"
+        if ($LASTEXITCODE -ne 0) { throw "Diagnostic compilation failed (exit $LASTEXITCODE)." }
+        & $diagnosticExecutable
+        if ($LASTEXITCODE -ne 0) { throw "Diagnostic tests failed (exit $LASTEXITCODE)." }
+
+
     }
     finally {
         Pop-Location

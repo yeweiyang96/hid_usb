@@ -40,13 +40,13 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(hid_usb hid_usb.c hid_engine.c hid_bridge.c wifi_watch.c wifi_service.c
+add_executable(hid_usb hid_usb.c hid_engine.c hid_bridge.c hid_lease.c wifi_watch.c wifi_service.c
     tusb_config.h
     usb_descriptors.c
     usb_descriptors.h )
 
 pico_set_program_name(hid_usb "hid_usb")
-pico_set_program_version(hid_usb "0.4.0-dualcore")
+pico_set_program_version(hid_usb "0.5.1-diagnostics")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(hid_usb 0)
@@ -60,7 +60,8 @@ target_link_libraries(hid_usb
 target_include_directories(hid_usb PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
 )
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/wifi_config.h")
+option(HID_COMPILE_ONLY "Build without Wi-Fi credentials; not for deployment" OFF)
+if(NOT HID_COMPILE_ONLY AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/wifi_config.h")
     target_compile_definitions(hid_usb PRIVATE HID_HAS_WIFI_CONFIG=1)
 else()
     message(STATUS "Wi-Fi uses CHANGE_ME placeholders; copy wifi_config.h.example to wifi_config.h and configure before deployment")
@@ -75,6 +76,7 @@ target_link_libraries(hid_usb
         tinyusb_board
         pico_cyw43_arch_lwip_threadsafe_background
         pico_multicore
+        pico_rand
         hardware_watchdog
         )
 
