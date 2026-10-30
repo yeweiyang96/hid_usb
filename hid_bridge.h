@@ -17,6 +17,7 @@ typedef struct {
     uint32_t epoch, acknowledged_epoch, accepted, rejected;
     uint32_t network_heartbeat_ms;
     HidLease lease;
+    HidMotion motion;
     HidDiagnostics diagnostics;
     uint32_t clock_ms;
 } HidBridge;
@@ -56,6 +57,8 @@ void hid_bridge_set_boot(HidBridge *bridge, uint32_t boot);
 /* Core 1, under the lwIP lock; never waits for USB or executes legacy input. */
 void hid_bridge_lease_request(HidBridge *bridge, const uint8_t *data, size_t size,
                               uint32_t now_ms, uint8_t response[HID_LEASE_RESPONSE_SIZE]);
+void hid_bridge_motion_request(HidBridge *, const uint8_t *, size_t, uint32_t,
+                               uint8_t response[HID_MOTION_RESPONSE_SIZE]);
 /* Core 0. Callback must be a nonblocking raw keyboard report submission and
  * must not reenter the bridge. Its execution is linearized with cancellation. */
 void hid_bridge_lease_tick(HidBridge *bridge, uint32_t now_ms,

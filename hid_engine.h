@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define HID_QUEUE_CAPACITY 8
-#define HID_MAX_PACKET_SIZE 40
+#define HID_MAX_PACKET_SIZE 216
 #define HID_HEALTH_SIZE 24
 #define HID_USB_STALL_US 2000000u
 

@@ -20,6 +20,7 @@ static void invalidate(HidBridge *b, uint32_t reason, uint32_t now_ms) {
         l->release_pending = true;
     }
     l->active = l->desired_pending = l->hold_started = false;
+    b->motion.active = b->motion.frame_pending = false;
     l->modifier = 0;
     memset(l->keys, 0, sizeof(l->keys));
     ++b->epoch;
@@ -185,6 +186,8 @@ static void lease_expire(HidBridge *b, uint32_t now) {
     HidLease *l = &b->lease;
     if (l->active && reached(now, l->expiry_ms)) {
         invalidate(b,HID_STOP_EXPIRED,now);
+    } else if (l->active && b->motion.active && reached(now,b->motion.not_after_ms)) {
+        invalidate(b,HID_STOP_WINDOW_END,now);
     } else if (l->active && l->hold_started && reached(now, l->hold_deadline_ms)) {
         l->modifier = 0;
         memset(l->keys, 0, 6);
@@ -227,12 +230,14 @@ static uint8_t lease_apply(HidBridge *b, const HidLeaseRequest *r, uint32_t now)
     if (r->boot != l->boot) return LEASE_STALE;
     if (r->op == LEASE_OPEN) {
         /* An ACK can be queried/replayed without extending authorization. */
-        if (l->active && r->session == l->session && r->epoch == b->epoch - 1u) return LEASE_OK;
+        if (l->active && r->version == l->version && r->session == l->session && r->epoch == b->epoch - 1u) return LEASE_OK;
         if (r->epoch != b->epoch) return LEASE_STALE;
         if (!lease_can_open(b)) return LEASE_UNAVAILABLE;
         invalidate(b,HID_STOP_NONE,now); /* Clears old state before lease use. */
         b->diagnostics.release_context_valid=false;
         l->active = true;
+        l->version = r->version;
+        memset(&b->motion,0,sizeof(b->motion));
         l->session = r->session;
         l->accepted_seq = l->applied_seq = l->target_seq = 0;
         l->expiry_ms = now + r->lease_ms;
@@ -246,6 +251,7 @@ static uint8_t lease_apply(HidBridge *b, const HidLeaseRequest *r, uint32_t now)
         r->session == l->closed_session && r->session) return LEASE_OK;
     if (r->epoch != b->epoch) return LEASE_STALE;
     if (!l->active || r->session != l->session) return LEASE_INACTIVE;
+    if (r->version != l->version) return LEASE_INVALID;
     if (r->op == LEASE_STOP) {
         invalidate(b,HID_STOP_CLIENT,now);
         return LEASE_OK;
@@ -254,10 +260,28 @@ static uint8_t lease_apply(HidBridge *b, const HidLeaseRequest *r, uint32_t now)
     uint32_t delta = r->seq - l->accepted_seq;
     if (!delta) return hid_lease_same_request(r, &l->last_request) ? LEASE_OK : LEASE_OLD_SEQUENCE;
     if (delta >= 0x80000000u) return LEASE_OLD_SEQUENCE;
+    if (r->op == LEASE_WINDOW) {
+        HidMotion *m=&b->motion;
+        uint32_t lifetime=r->not_after_ms-now;
+        uint32_t revision_delta=r->revision-m->last_revision;
+        uint32_t event_delta=r->event_id-m->last_event;
+        if (!lifetime || lifetime>200u) return LEASE_STALE;
+        if (!revision_delta || revision_delta>=0x80000000u) return LEASE_OLD_SEQUENCE;
+        if (r->event_id && (!event_delta || event_delta>=0x80000000u)) return LEASE_OLD_SEQUENCE;
+        /* The entire future replaces atomically. No release report at the seam. */
+        memcpy(m->frames,r->frames,sizeof(m->frames)); m->count=(uint8_t)r->count;
+        m->index=0; m->active=true; m->started=false; m->frame_pending=true;
+        m->revision=m->last_revision=r->revision; m->event_id=r->event_id;
+        if (r->event_id) m->last_event=r->event_id;
+        m->not_after_ms=r->not_after_ms;
+        l->desired_pending=l->hold_started=l->hold_expired=false;
+        l->hold_ms=0; l->target_seq=r->seq;
+    }
     l->accepted_seq = r->seq;
     l->expiry_ms = now + r->lease_ms;
     l->last_request = *r;
     if (r->op == LEASE_SET) {
+        b->motion.active=b->motion.frame_pending=false;
         l->target_seq = r->seq;
         l->modifier = r->modifier;
         memcpy(l->keys, r->keys, 6);
@@ -271,7 +295,7 @@ static uint8_t lease_apply(HidBridge *b, const HidLeaseRequest *r, uint32_t now)
 void hid_bridge_lease_request(HidBridge *b, const uint8_t *data, size_t size,
                               uint32_t now, uint8_t response[HID_LEASE_RESPONSE_SIZE]) {
     HidLeaseRequest r;
-    bool valid = hid_lease_decode(data, size, &r);
+    bool valid = hid_lease_decode(data, size, &r) && r.version==3;
     uint32_t token = size >= 16 ? hid_read_u32(data + 12) : 0;
     critical_section_enter_blocking(&b->lock);
     b->clock_ms=now;
@@ -282,12 +306,53 @@ void hid_bridge_lease_request(HidBridge *b, const uint8_t *data, size_t size,
     critical_section_exit(&b->lock);
 }
 
+static void motion_w32(uint8_t *p,uint32_t v) {
+    for (unsigned i=0;i<4;++i) p[i]=(uint8_t)(v>>(i*8));
+}
+
+void hid_bridge_motion_request(HidBridge *b,const uint8_t *data,size_t size,
+                               uint32_t now,uint8_t response[HID_MOTION_RESPONSE_SIZE]) {
+    HidLeaseRequest r;
+    bool valid=hid_lease_decode(data,size,&r) && r.version==4 && r.op!=LEASE_DIAGNOSTIC;
+    uint32_t token=size>=16?hid_read_u32(data+12):0;
+    critical_section_enter_blocking(&b->lock);
+    b->clock_ms=now; lease_expire(b,now);
+    uint8_t result=valid?lease_apply(b,&r,now):LEASE_INVALID;
+    HidLeaseStatus status=lease_status(b,now,token,result);
+    if (b->motion.active && b->motion.frame_pending) status.flags|=LEASE_PENDING;
+    hid_lease_encode(response,&status); response[4]=4;
+    HidMotion *m=&b->motion;
+    motion_w32(response+48,m->revision);
+    motion_w32(response+52,m->submitted_revision);
+    motion_w32(response+56,m->completed_revision);
+    motion_w32(response+60,m->started?m->start_ms:0);
+    motion_w32(response+64,m->active?m->not_after_ms-now:0);
+    motion_w32(response+68,m->applied_event);
+    response[72]=m->index; response[73]=m->count;
+    response[74]=(uint8_t)m->submitted_frame; response[75]=(uint8_t)m->completed_frame;
+    motion_w32(response+76,1u); /* bounded timeline capability */
+    critical_section_exit(&b->lock);
+}
+
 void hid_bridge_lease_tick(HidBridge *b, uint32_t now,
                           bool (*keyboard)(void *, uint8_t, const uint8_t[6]), void *context) {
     critical_section_enter_blocking(&b->lock);
     b->clock_ms=now;
     lease_expire(b, now);
     HidLease *l = &b->lease;
+    HidMotion *m = &b->motion;
+    if (l->active && m->active && m->started && !m->frame_pending && reached(now,m->due_ms)) {
+        if (++m->index>=m->count) {
+            invalidate(b,HID_STOP_WINDOW_END,now);
+        } else {
+            m->frame_pending=true;
+            m->ready_deadline_ms=m->due_ms+5u;
+        }
+    }
+    /* Allow normal USB scheduling jitter, never compress a delayed state or
+     * replay old states to catch up. The absolute window deadline never moves. */
+    if (l->active && m->active && m->started && m->frame_pending && reached(now,m->ready_deadline_ms))
+        invalidate(b,HID_STOP_TIMELINE_LATE,now);
     /* The old engine must have acknowledged the cancellation and finished all
      * of its keyboard/mouse releases before the new state can be submitted. */
     if (!b->usb_available || b->acknowledged_epoch != b->epoch || b->engine_busy || b->in_flight) {
@@ -301,6 +366,21 @@ void hid_bridge_lease_tick(HidBridge *b, uint32_t now,
             l->actual_modifier = 0;
             memset(l->actual_keys, 0, 6);
             l->release_pending = false;
+        }
+    } else if (l->active && b->network_up && m->active && m->frame_pending) {
+        HidKeyframe *f=&m->frames[m->index];
+        if (keyboard(context,f->modifier,f->keys)) {
+            hid_bridge_keyboard_submitted_locked(b,f->modifier,f->keys,now,true);
+            l->actual_modifier=f->modifier; memcpy(l->actual_keys,f->keys,6);
+            l->applied_seq=l->target_seq;
+            m->submitted_revision=m->revision; m->submitted_frame=m->index;
+            m->submitted_seq=l->target_seq; m->submit_time_ms=now;
+            if (!m->index && m->event_id) m->applied_event=m->event_id;
+            if (!m->started) {
+                m->started=true; m->start_ms=now;
+            }
+            m->due_ms=now+f->duration_ms;
+            m->frame_pending=false;
         }
     } else if (l->active && b->network_up && l->desired_pending) {
         if (keyboard(context, l->modifier, l->keys)) {
@@ -423,6 +503,11 @@ void hid_bridge_keyboard_complete(HidBridge *b, uint8_t modifier, const uint8_t 
         if (d->pending_tracked && !d->tracking_blocked) {
             HidDiagnosticEvent event=d->pending_event; event.time_ms=now_ms;
             d->snapshot.completed=event;
+            if (b->lease.version==4 && b->motion.submitted_revision &&
+                event.seq==b->motion.submitted_seq && !d->pending_release) {
+                b->motion.completed_revision=b->motion.submitted_revision;
+                b->motion.completed_frame=b->motion.submitted_frame;
+            }
             d->snapshot.validity=(d->snapshot.validity & ~HID_COMPLETED_RELEASE) | HID_VALID_COMPLETED |
                 (d->pending_release?HID_COMPLETED_RELEASE:0);
             if (d->pending_release) {

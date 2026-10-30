@@ -10,9 +10,13 @@ static void w16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v 
 static void w32(uint8_t *p, uint32_t v) { for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(v >> (8u * i)); }
 
 bool hid_lease_decode(const uint8_t *data, size_t size, HidLeaseRequest *r) {
-    if (!data || !r || size != HID_LEASE_REQUEST_SIZE || memcmp(data, "ADRV", 4) ||
-        data[4] != 3 || data[5] > LEASE_DIAGNOSTIC || u16(data + 10) || data[39]) return false;
+    if (!data || !r || size < HID_LEASE_REQUEST_SIZE || memcmp(data, "ADRV", 4) ||
+        (data[4] != 3 && data[4] != 4) || data[5] > (data[4] == 4 ? LEASE_WINDOW : LEASE_DIAGNOSTIC) ||
+        u16(data + 10) || data[39]) return false;
+    bool window = data[4] == 4 && data[5] == LEASE_WINDOW;
+    if (!window && size != HID_LEASE_REQUEST_SIZE) return false;
     memset(r, 0, sizeof(*r));
+    r->version = data[4];
     r->op = data[5]; r->lease_ms = u16(data + 6); r->hold_ms = u16(data + 8);
     r->token = u32(data + 12); r->boot = u32(data + 16); r->epoch = u32(data + 20);
     r->session = u32(data + 24); r->seq = u32(data + 28); r->modifier = data[32];
@@ -25,20 +29,42 @@ bool hid_lease_decode(const uint8_t *data, size_t size, HidLeaseRequest *r) {
             for (unsigned j = 0; j < i; ++j) if (r->keys[i] == r->keys[j]) return false;
         }
     }
-    if (r->op == LEASE_SET || r->op == LEASE_RENEW || r->op == LEASE_OPEN) {
+    if (r->op == LEASE_SET || r->op == LEASE_RENEW || r->op == LEASE_OPEN || window) {
         if (r->lease_ms < HID_LEASE_MIN_MS || r->lease_ms > HID_LEASE_MAX_MS) return false;
     } else if (r->lease_ms) return false;
     if (r->op != LEASE_SET && (keys || r->hold_ms)) return false;
     if (r->hold_ms && (r->hold_ms < 20 || r->hold_ms > 200)) return false;
     if (r->op == LEASE_OPEN && (!r->session || r->seq)) return false;
     if (r->op == LEASE_DIAGNOSTIC && (r->boot || r->epoch || r->session || r->seq)) return false;
+    if (window) {
+        if (size < HID_MOTION_HEADER_SIZE || u16(data + 50)) return false;
+        r->revision=u32(data+40); r->event_id=u32(data+44); r->count=u16(data+48);
+        r->not_after_ms=u32(data+52);
+        if (!r->revision || !r->count || r->count>HID_MOTION_CAPACITY ||
+            size != HID_MOTION_HEADER_SIZE + r->count * HID_MOTION_FRAME_SIZE) return false;
+        unsigned total=0;
+        for (unsigned i=0;i<r->count;++i) {
+            const uint8_t *p=data+HID_MOTION_HEADER_SIZE+i*HID_MOTION_FRAME_SIZE;
+            HidKeyframe *f=&r->frames[i]; f->duration_ms=u16(p); f->modifier=p[2];
+            memcpy(f->keys,p+3,6);
+            if (f->duration_ms<20 || f->duration_ms>200 || p[9]) return false;
+            total+=f->duration_ms;
+            for (unsigned j=0;j<6;++j) {
+                if (f->keys[j] && (f->keys[j]<4 || f->keys[j]>0xdf)) return false;
+                for (unsigned k=0;k<j;++k) if (f->keys[j] && f->keys[j]==f->keys[k]) return false;
+            }
+        }
+        if (total>200) return false;
+    }
     return true;
 }
 
 bool hid_lease_same_request(const HidLeaseRequest *a, const HidLeaseRequest *b) {
-    return a->op == b->op && a->lease_ms == b->lease_ms && a->hold_ms == b->hold_ms &&
+    return a->version == b->version && a->op == b->op && a->lease_ms == b->lease_ms && a->hold_ms == b->hold_ms &&
         a->boot == b->boot && a->epoch == b->epoch && a->session == b->session &&
-        a->seq == b->seq && a->modifier == b->modifier && !memcmp(a->keys, b->keys, 6);
+        a->seq == b->seq && a->modifier == b->modifier && !memcmp(a->keys, b->keys, 6) &&
+        a->revision == b->revision && a->event_id == b->event_id && a->not_after_ms == b->not_after_ms &&
+        a->count == b->count && !memcmp(a->frames,b->frames,sizeof(a->frames));
 }
 
 void hid_lease_encode(uint8_t out[HID_LEASE_RESPONSE_SIZE], const HidLeaseStatus *s) {
@@ -70,5 +96,5 @@ void hid_diagnostic_encode(uint8_t out[HID_DIAGNOSTIC_SIZE], uint8_t result,
     w32(out+124,s->net_send_errors); w32(out+128,s->usb_errors);
     w32(out+132,s->core0_max_gap_us); w32(out+136,s->core1_max_gap_us);
     w32(out+140,s->usb_unmatched_completions); w32(out+144,s->usb_tracking_overruns);
-    w32(out+148,0x00030003u); /* minimum/maximum ADRV action protocol. */
+    w32(out+148,0x00040003u); /* minimum/maximum ADRV action protocol. */
 }

@@ -48,9 +48,9 @@ static void test_wire_and_read_only(void) {
     uint8_t out[160];diag(&b,1100,out);
     CHECK(!memcmp(out,"ADRD",4)&&out[4]==1&&out[5]==0&&out[6]==160&&out[7]==0);
     CHECK(hid_read_u32(out+8)==0x12345678&&hid_read_u32(out+12)==123&&hid_read_u32(out+16)==1100);
-    CHECK(hid_read_u32(out+20)==0x00050100&&hid_read_u32(out+24)==0x3f);
+    CHECK(hid_read_u32(out+20)==0x00060000&&hid_read_u32(out+24)==0x7f);
     CHECK(hid_read_u32(out+28)==0x012c0064&&hid_read_u32(out+32)==0x00c80014);
-    CHECK(hid_read_u32(out+148)==0x00030003&&hid_read_u32(out+152)==0&&hid_read_u32(out+156)==0);
+    CHECK(hid_read_u32(out+148)==0x00040003&&hid_read_u32(out+152)==0&&hid_read_u32(out+156)==0);
     CHECK(b.lease.expiry_ms==expiry&&b.lease.accepted_seq==seq&&o.calls==reports);
     CHECK(hid_read_u32(out+36)&HID_VALID_SUBMITTED);
     CHECK(hid_read_u32(out+60)==2&&hid_read_u32(out+64)==42&&hid_read_u32(out+68)==1&&hid_read_u32(out+72)==1004);

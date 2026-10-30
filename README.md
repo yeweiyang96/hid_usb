@@ -1,6 +1,6 @@
 # Pico 2 W UDP HID 固件
 
-当前源码为 **0.5.1-diagnostics**，新增用于连续行走的带期限键盘状态通道：持续续租时不松键，过期自动释放，STOP 抢占当前动作；会话与序号防止迟到包恢复旧输入。见[新协议说明](docs/lease-protocol.md)。新增[只读诊断](docs/diagnostics-v1.md)，区分停止原因、USB提交与完成，并显示固件能力和错误/循环停顿计数。旧 UDP 格式保留；旧命令 10 已强化为抢占释放。
+当前源码为 **0.6.0-motion**。新增 ADRV v4 原子替换时间序列，W→W+A→W 切换不插入全释放；每段至少 20 ms、整个窗口最多 200 ms，续租不能延长窗口或重放一次性动作。见 [时间序列协议](docs/motion-v4.md)。旧 [v3 状态通道](docs/lease-protocol.md) 和 [只读诊断](docs/diagnostics-v1.md) 保留；停止抢占并撤销整个时间序列。USB 接受、传输完成和游戏执行是不同证据。
 
 Pico SDK 2.3.1 + TinyUSB，UDP 默认端口 `8888`。键盘和鼠标使用两个独立的 USB HID 接口，USB 轮询间隔为 1 ms。Wi-Fi 关闭省电模式；这会增加功耗。1 ms 是 USB 轮询间隔，实际端到端延迟需要在板上测量。
 

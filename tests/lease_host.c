@@ -41,6 +41,11 @@ EXPORT void exchange(const uint8_t request[40], uint32_t now_ms, uint8_t respons
     hid_bridge_lease_request(&bridge, request, HID_LEASE_REQUEST_SIZE, now_ms, response);
 }
 
+EXPORT void exchange_motion(const uint8_t *request,unsigned size,uint32_t now_ms,uint8_t response[80]) {
+    tick(now_ms);
+    hid_bridge_motion_request(&bridge,request,size,now_ms,response);
+}
+
 EXPORT void copy_keyboard(uint8_t out[7]) { memcpy(out, last_keyboard, 7); }
 EXPORT unsigned keyboard_reports(void) { return reports; }
 EXPORT unsigned keyboard_releases(void) { return releases; }

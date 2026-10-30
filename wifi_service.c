@@ -129,7 +129,11 @@ static void udp_server_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
         }
     }
     if (length >= 4 && !memcmp(data, "ADRV", 4)) {
-        if (length>=6 && data[5]==LEASE_DIAGNOSTIC) {
+        if (length>=6 && data[4]==4) {
+            uint8_t response[HID_MOTION_RESPONSE_SIZE];
+            hid_bridge_motion_request(bridge,data,length,(uint32_t)(time_us_64()/1000u),response);
+            send_reply(pcb,&source,port,response,sizeof(response));
+        } else if (length>=6 && data[5]==LEASE_DIAGNOSTIC) {
             uint8_t diagnostic[HID_DIAGNOSTIC_SIZE];
             hid_bridge_diagnostic_request(bridge,data,length,(uint32_t)(time_us_64()/1000u),diagnostic);
             send_reply(pcb,&source,port,diagnostic,sizeof(diagnostic));

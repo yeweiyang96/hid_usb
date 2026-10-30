@@ -46,7 +46,7 @@ add_executable(hid_usb hid_usb.c hid_engine.c hid_bridge.c hid_lease.c wifi_watc
     usb_descriptors.h )
 
 pico_set_program_name(hid_usb "hid_usb")
-pico_set_program_version(hid_usb "0.5.1-diagnostics")
+pico_set_program_version(hid_usb "0.6.0-motion")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(hid_usb 0)

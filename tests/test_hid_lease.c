@@ -70,6 +70,7 @@ static HidLeaseRequest open_session(HidBridge *b, Output *o, uint32_t now) {
 
 static void test_wire(void) {
     HidLeaseRequest r = {0}, decoded;
+    r.version=3;
     r.op = LEASE_SET; r.lease_ms = 250; r.hold_ms = 100; r.token = 0x12345678;
     r.boot = 0x10203040; r.epoch = 12; r.session = 0x76543210; r.seq = 9;
     r.modifier = 2; r.keys[0] = 26;
